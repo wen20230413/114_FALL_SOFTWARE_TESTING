@@ -55,6 +55,34 @@ class SudokuBoard:
                 self.grid[row][col] = 0  # Backtrack
         return False
 
+    def has_unique_solution(self):
+        """
+        Check if the Sudoku puzzle has a unique solution.
+        Returns True if the puzzle has exactly one solution, False otherwise.
+        """
+        solution_count = 0
+
+        def count_solutions():
+            nonlocal solution_count
+            find = self.find_empty()
+            if not find:
+                solution_count += 1
+                return
+
+            row, col = find
+            for num in range(1, self.size + 1):
+                if self.is_valid(row, col, num):
+                    self.grid[row][col] = num
+                    count_solutions()
+                    self.grid[row][col] = 0  # Backtrack
+
+                    # Stop early if more than one solution is found
+                    if solution_count > 1:
+                        return
+
+        count_solutions()
+        return solution_count == 1
+
 
 def generate(difficulty):
     # 1. Create a full, random solution
