@@ -54,6 +54,52 @@ class SudokuBoard:
                     return True
                 self.grid[row][col] = 0  # Backtrack
         return False
+    
+    def has_unique_solution(self):
+        """
+        Check if the Sudoku puzzle has a unique solution.
+        Returns True if the puzzle has exactly one solution, False otherwise.
+        """
+        solution_count = 0
+
+        def count_solutions():
+            nonlocal solution_count
+            find = self.find_empty()
+            if not find:
+                solution_count += 1
+                return
+
+            row, col = find
+            for num in range(1, self.size + 1):
+                if self.is_valid(row, col, num):
+                    self.grid[row][col] = num
+                    count_solutions()
+                    self.grid[row][col] = 0  # Backtrack
+
+                    # Stop early if more than one solution is found
+                    if solution_count > 1:
+                        return
+
+        count_solutions()
+        return solution_count == 1
+
+    def score_difficulty(self):
+        """
+        使用人類求解技巧評估難度 (Human-Logic Difficulty Rating)
+        Returns 'Easy', 'Medium', or 'Hard'.
+        
+        Uses DifficultyEngine with human-like solving technique hierarchy:
+        - Easy (score ~15): Naked Singles, Hidden Singles
+        - Medium (score 65-80): Naked Pairs, Pointing Pairs
+        - Hard (score 120+): X-Wing
+        
+        This method simulates how a human would solve the puzzle,
+        not the computational complexity of backtracking algorithms.
+        """
+        from difficulty_engine import DifficultyEngine
+        engine = DifficultyEngine()
+        difficulty, score, techniques = engine.rate_puzzle(self)
+        return difficulty
 
 
 def generate(difficulty):
