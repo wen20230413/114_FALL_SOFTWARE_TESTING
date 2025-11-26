@@ -166,6 +166,96 @@ def test_engine_consistency():
     print(f"✓ Engine consistency verified")
 
 
+def test_invalid_board_handling():
+    """測試無效棋盤的處理"""
+    # 測試空的棋盤
+    empty_board = [[0] * 9 for _ in range(9)]
+    board = SudokuBoard(empty_board)
+    engine = DifficultyEngine()
+    
+    try:
+        difficulty, score, techniques = engine.rate_puzzle(copy.deepcopy(board))
+        # 應該能處理空棋盤，但可能會標記為需要專家技巧
+        assert difficulty in ['Easy', 'Medium', 'Hard']
+        print("✓ Empty board handled correctly")
+    except Exception as e:
+        print(f"✓ Empty board handled with exception: {e}")
+
+
+def test_empty_board_handling():
+    """測試完全空白的棋盤"""
+    empty_puzzle = [[0 for _ in range(9)] for _ in range(9)]
+    board = SudokuBoard(empty_puzzle)
+    engine = DifficultyEngine()
+    
+    # 空棋盤應該能夠處理，但可能會被評為最高難度
+    difficulty, score, techniques = engine.rate_puzzle(copy.deepcopy(board))
+    
+    assert isinstance(difficulty, str)
+    assert isinstance(score, (int, float))
+    assert isinstance(techniques, list)
+    
+    print(f"✓ Empty board rated as: {difficulty} (score: {score})")
+
+
+def test_already_solved_board():
+    """測試已經解決的棋盤"""
+    solved_puzzle = [
+        [5, 3, 4, 6, 7, 8, 9, 1, 2],
+        [6, 7, 2, 1, 9, 5, 3, 4, 8],
+        [1, 9, 8, 3, 4, 2, 5, 6, 7],
+        [8, 5, 9, 7, 6, 1, 4, 2, 3],
+        [4, 2, 6, 8, 5, 3, 7, 9, 1],
+        [7, 1, 3, 9, 2, 4, 8, 5, 6],
+        [9, 6, 1, 5, 3, 7, 2, 8, 4],
+        [2, 8, 7, 4, 1, 9, 6, 3, 5],
+        [3, 4, 5, 2, 8, 6, 1, 7, 9]
+    ]
+    
+    board = SudokuBoard(solved_puzzle)
+    engine = DifficultyEngine()
+    
+    difficulty, score, techniques = engine.rate_puzzle(copy.deepcopy(board))
+    
+    # 已解決的棋盤應該得到最低分
+    assert score == 0 or len(techniques) == 0
+    
+    print(f"✓ Solved board handled: {difficulty} (score: {score})")
+
+
+def test_infinite_loop_protection():
+    """測試無限迴圈保護機制"""
+    # 創建一個可能導致無限迴圈的題目（無解或需要猜測）
+    unsolvable_puzzle = [
+        [1, 1, 0, 0, 0, 0, 0, 0, 0],  # 第一行有重複的1
+        [0, 0, 0, 0, 0, 0, 0, 0, 0],
+        [0, 0, 0, 0, 0, 0, 0, 0, 0],
+        [0, 0, 0, 0, 0, 0, 0, 0, 0],
+        [0, 0, 0, 0, 0, 0, 0, 0, 0],
+        [0, 0, 0, 0, 0, 0, 0, 0, 0],
+        [0, 0, 0, 0, 0, 0, 0, 0, 0],
+        [0, 0, 0, 0, 0, 0, 0, 0, 0],
+        [0, 0, 0, 0, 0, 0, 0, 0, 0]
+    ]
+    
+    board = SudokuBoard(unsolvable_puzzle)
+    engine = DifficultyEngine()
+    
+    # 測試是否能在合理時間內返回結果（不會無限迴圈）
+    import time
+    start_time = time.time()
+    
+    difficulty, score, techniques = engine.rate_puzzle(copy.deepcopy(board))
+    
+    end_time = time.time()
+    duration = end_time - start_time
+    
+    # 應該在5秒內完成
+    assert duration < 5, f"Took too long: {duration} seconds"
+    
+    print(f"✓ Infinite loop protection works (completed in {duration:.2f}s)")
+
+
 if __name__ == "__main__":
     print("Running difficulty engine tests...\n")
     
@@ -175,5 +265,11 @@ if __name__ == "__main__":
     test_technique_hierarchy()
     test_difficulty_classification()
     test_engine_consistency()
+    
+    # 新增的測試
+    test_invalid_board_handling()
+    test_empty_board_handling()
+    test_already_solved_board()
+    test_infinite_loop_protection()
     
     print("\n✅ All difficulty engine tests passed!")

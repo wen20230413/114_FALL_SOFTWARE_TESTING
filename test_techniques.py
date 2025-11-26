@@ -326,27 +326,6 @@ def test_x_wing_elimination():
     print("✓ X-Wing elimination test passed")
 
 
-if __name__ == "__main__":
-    print("Running technique detection tests...\n")
-    
-    test_calculate_candidates()
-    test_naked_singles_detection()
-    test_hidden_singles_detection()
-    test_candidate_update()
-    test_easy_puzzle_with_singles_only()
-    test_naked_pairs_detection()
-    test_pointing_pairs_detection()
-    test_pairs_elimination()
-    test_x_wing_detection()
-    test_x_wing_elimination()
-    test_swordfish_detection()
-    test_swordfish_elimination()
-    test_xy_wing_detection()
-    test_xy_wing_elimination()
-    
-    print("\n✅ All tests passed!")
-
-
 def test_xy_wing_detection():
     """測試 XY-Wing 檢測 (樞紐模式)"""
     # 創建一個包含 XY-Wing 模式的題目
@@ -513,3 +492,136 @@ def test_swordfish_elimination():
         eliminated = tech.apply_swordfish([])
         assert eliminated == 0, "Should eliminate 0 candidates when no pattern found"
         print("✓ Swordfish elimination test passed (no pattern to apply)")
+
+
+if __name__ == "__main__":
+    print("Running technique detection tests...\n")
+    
+    test_calculate_candidates()
+    test_naked_singles_detection()
+    test_hidden_singles_detection()
+    test_candidate_update()
+    test_easy_puzzle_with_singles_only()
+    test_naked_pairs_detection()
+    test_pointing_pairs_detection()
+    test_pairs_elimination()
+    test_x_wing_detection()
+    test_x_wing_elimination()
+    test_swordfish_detection()
+    test_swordfish_elimination()
+    test_xy_wing_detection()
+    test_xy_wing_elimination()
+
+
+def test_edge_cases():
+    """測試邊界條件"""
+    # 測試只有一個空格的題目
+    nearly_solved = [
+        [5, 3, 4, 6, 7, 8, 9, 1, 2],
+        [6, 7, 2, 1, 9, 5, 3, 4, 8],
+        [1, 9, 8, 3, 4, 2, 5, 6, 7],
+        [8, 5, 9, 7, 6, 1, 4, 2, 3],
+        [4, 2, 6, 8, 5, 3, 7, 9, 1],
+        [7, 1, 3, 9, 2, 4, 8, 5, 6],
+        [9, 6, 1, 5, 3, 7, 2, 8, 4],
+        [2, 8, 7, 4, 1, 9, 6, 3, 5],
+        [3, 4, 5, 2, 8, 6, 1, 7, 0]  # 只有最後一格是空的
+    ]
+    
+    board = SudokuBoard(nearly_solved)
+    tech = SudokuTechniques(board)
+    
+    # 應該只有一個候選位置
+    assert len(tech.candidates) == 1
+    assert (8, 8) in tech.candidates
+    assert tech.candidates[(8, 8)] == {9}
+    
+    # 應該能找到一個 Naked Single
+    singles = tech.find_naked_singles()
+    assert len(singles) == 1
+    assert singles[0] == (8, 8, 9)
+    
+    print("✓ Nearly solved puzzle edge case passed")
+
+
+def test_empty_candidates():
+    """測試候選數字為空的情況"""
+    # 創建一個無效的題目（同一行有重複數字）
+    invalid_puzzle = [
+        [1, 1, 0, 0, 0, 0, 0, 0, 0],  # 第一行有重複的1
+        [0, 0, 0, 0, 0, 0, 0, 0, 0],
+        [0, 0, 0, 0, 0, 0, 0, 0, 0],
+        [0, 0, 0, 0, 0, 0, 0, 0, 0],
+        [0, 0, 0, 0, 0, 0, 0, 0, 0],
+        [0, 0, 0, 0, 0, 0, 0, 0, 0],
+        [0, 0, 0, 0, 0, 0, 0, 0, 0],
+        [0, 0, 0, 0, 0, 0, 0, 0, 0],
+        [0, 0, 0, 0, 0, 0, 0, 0, 0]
+    ]
+    
+    board = SudokuBoard(invalid_puzzle)
+    tech = SudokuTechniques(board)
+    
+    # (0, 2) 位置應該沒有有效的候選數字，因為1已經在同一行出現兩次
+    candidates_0_2 = tech._get_candidates(0, 2)
+    
+    # 系統應該能處理這種情況而不崩潰
+    assert isinstance(candidates_0_2, set)
+    
+    print("✓ Invalid puzzle edge case handled")
+
+
+def test_invalid_positions():
+    """測試無效位置的處理"""
+    puzzle = [
+        [5, 3, 0, 0, 7, 0, 0, 0, 0],
+        [6, 0, 0, 1, 9, 5, 0, 0, 0],
+        [0, 9, 8, 0, 0, 0, 0, 6, 0],
+        [8, 0, 0, 0, 6, 0, 0, 0, 3],
+        [4, 0, 0, 8, 0, 3, 0, 0, 1],
+        [7, 0, 0, 0, 2, 0, 0, 0, 6],
+        [0, 6, 0, 0, 0, 0, 2, 8, 0],
+        [0, 0, 0, 4, 1, 9, 0, 0, 5],
+        [0, 0, 0, 0, 8, 0, 0, 7, 9]
+    ]
+    
+    board = SudokuBoard(puzzle)
+    tech = SudokuTechniques(board)
+    
+    # 測試已填充位置的候選數字計算
+    filled_candidates = tech._get_candidates(0, 0)  # (0, 0) 已經有數字5
+    assert len(filled_candidates) == 0, "Filled cell should have no candidates"
+    
+    # 測試 _can_see 函數的各種情況
+    assert tech._can_see(0, 0, 0, 5) == True   # 同行
+    assert tech._can_see(0, 0, 5, 0) == True   # 同列
+    assert tech._can_see(0, 0, 1, 1) == True   # 同box
+    assert tech._can_see(0, 0, 3, 3) == False  # 不同單元
+    
+    print("✓ Invalid positions handled correctly")
+
+
+if __name__ == "__main__":
+    print("Running technique detection tests...\n")
+    
+    test_calculate_candidates()
+    test_naked_singles_detection()
+    test_hidden_singles_detection()
+    test_candidate_update()
+    test_easy_puzzle_with_singles_only()
+    test_naked_pairs_detection()
+    test_pointing_pairs_detection()
+    test_pairs_elimination()
+    test_x_wing_detection()
+    test_x_wing_elimination()
+    test_swordfish_detection()
+    test_swordfish_elimination()
+    test_xy_wing_detection()
+    test_xy_wing_elimination()
+    
+    # 邊界條件和錯誤處理測試
+    test_edge_cases()
+    test_empty_candidates()
+    test_invalid_positions()
+    
+    print("\n✅ All tests passed!")
