@@ -7,8 +7,11 @@ Integrates with existing difficulty rating system
 import tkinter as tk
 from tkinter import messagebox, ttk
 import random
+import threading
+import time
 from SUDOKU import SudokuBoard, generate
 from difficulty_engine import DifficultyEngine
+from puzzle_cache import PuzzleCache
 
 
 class SudokuGUI:
@@ -16,8 +19,9 @@ class SudokuGUI:
         self.root = root
         self.root.title("Sudoku Solver with Difficulty Rating")
         
-        # Initialize difficulty engine
+        # Initialize difficulty engine and puzzle cache
         self.engine = DifficultyEngine()
+        self.puzzle_cache = PuzzleCache()
         
         # Game state
         self.puzzle_board = None
@@ -41,6 +45,18 @@ class SudokuGUI:
         self.ERROR_COLOR = "#FFCDD2"
         
         self.setup_ui()
+        
+        # Initialize progress tracking
+        self.cache_build_in_progress = False
+        
+        # Initialize undo/redo system
+        self.move_history = []
+        self.undo_stack = []
+        self.redo_stack = []
+        
+        # 延遲緩存檢查，讓GUI先啟動
+        self.root.after(100, self.check_and_build_cache_delayed)
+        
         self.generate_new_puzzle()
     
     def setup_ui(self):
@@ -188,6 +204,76 @@ class SudokuGUI:
             pady=5
         ).pack(side="left", padx=5)
         
+        # Hint button
+        tk.Button(
+            button_frame,
+            text="💡 Hint",
+            command=self.show_hint,
+            font=("Arial", 12),
+            bg="#9C27B0",
+            fg="white",
+            padx=20,
+            pady=5
+        ).pack(side="left", padx=5)
+        
+        # Second row of buttons
+        button_frame2 = tk.Frame(main_frame, bg=self.BG_COLOR)
+        button_frame2.grid(row=5, column=0, columnspan=3, pady=5)
+        
+        # Undo button
+        self.undo_button = tk.Button(
+            button_frame2,
+            text="↶ Undo",
+            command=self.undo_move,
+            font=("Arial", 10),
+            bg="#607D8B",
+            fg="white",
+            padx=15,
+            pady=3,
+            state="disabled"
+        )
+        self.undo_button.pack(side="left", padx=5)
+        
+        # Redo button
+        self.redo_button = tk.Button(
+            button_frame2,
+            text="↷ Redo", 
+            command=self.redo_move,
+            font=("Arial", 10),
+            bg="#607D8B",
+            fg="white",
+            padx=15,
+            pady=3,
+            state="disabled"
+        )
+        self.redo_button.pack(side="left", padx=5)
+        
+        tk.Button(
+            button_frame,
+            text="Cache Status",
+            command=self.show_cache_status,
+            font=("Arial", 10),
+            bg="#607D8B",
+            fg="white",
+            padx=15,
+            pady=5
+        ).pack(side="left", padx=5)
+        
+        # Status frame for cache progress
+        self.status_frame = tk.Frame(main_frame, bg=self.BG_COLOR)
+        self.status_frame.grid(row=4, column=0, columnspan=3, pady=5)
+        
+        # Progress bar for cache building (initially hidden)
+        self.progress_frame = tk.Frame(self.status_frame, bg=self.BG_COLOR)
+        self.progress_label = tk.Label(self.progress_frame, text="", 
+                                     font=("Arial", 9), bg=self.BG_COLOR)
+        self.progress_label.pack()
+        
+        self.progress_bar = ttk.Progressbar(self.progress_frame, 
+                                          mode='determinate', 
+                                          length=200)
+        self.progress_bar.pack(pady=2)
+        
         # Bind keyboard events
         self.root.bind("<Key>", self.key_pressed)
     
@@ -201,58 +287,38 @@ class SudokuGUI:
     def generate_new_puzzle(self):
         """
         Generate a new Sudoku puzzle matching the selected difficulty level
-        Uses DifficultyEngine to ensure the puzzle matches the target complexity
+        Uses cache system for faster generation, especially for Hard puzzles
         """
         target_difficulty = self.selected_difficulty.get()  # "Easy", "Medium", or "Hard"
         
-        print(f"\n🎯 Generating {target_difficulty} puzzle...")
+        print(f"\n🎯 Getting {target_difficulty} puzzle...")
         
-        # Difficulty ranges for empty cells (starting estimates)
-        empty_cells_range = {
-            "Easy": (30, 40),
-            "Medium": (40, 50),
-            "Hard": (50, 58)
-        }
+        # 1. 首先嘗試從緩存獲取
+        cached_puzzle = self.puzzle_cache.get_puzzle(target_difficulty)
         
-        max_attempts = 30
-        best_puzzle = None
-        best_solution = None
-        best_score = None
-        
-        for attempt in range(max_attempts):
-            # Start with a random number of empty cells in the range
-            min_cells, max_cells = empty_cells_range[target_difficulty]
-            empty_cells = random.randint(min_cells, max_cells)
+        if cached_puzzle:
+            # 使用緩存的題目
+            self.puzzle_board, self.solution_board = cached_puzzle
+            print(f"✅ Using cached {target_difficulty} puzzle")
             
-            # Generate puzzle
-            puzzle, solution = generate(empty_cells)
+            # 在背景中生成新的題目補充緩存
+            threading.Thread(
+                target=self.replenish_cache_background, 
+                args=(target_difficulty,), 
+                daemon=True
+            ).start()
             
-            # Evaluate difficulty
-            difficulty_rating, score, techniques = self.engine.rate_puzzle(puzzle)
-            
-            # Check if it matches target
-            if difficulty_rating == target_difficulty:
-                # Perfect match!
-                self.puzzle_board = puzzle
-                self.solution_board = solution
-                best_score = score
-                print(f"✅ Found {target_difficulty} puzzle on attempt {attempt+1}")
-                break
-            else:
-                # Keep track of best attempt
-                if best_puzzle is None:
-                    best_puzzle = puzzle
-                    best_solution = solution
-                    best_score = score
-                
-                # Print progress every 5 attempts
-                if (attempt + 1) % 5 == 0:
-                    print(f"  Attempt {attempt+1}: Got {difficulty_rating} (score: {score}), retrying...")
         else:
-            # If no perfect match found, use best attempt
-            print(f"⚠️  Using closest match after {max_attempts} attempts")
-            self.puzzle_board = best_puzzle
-            self.solution_board = best_solution
+            # 緩存中沒有，需要即時生成
+            print(f"⚠️ No cached {target_difficulty} puzzle available, generating now...")
+            self.puzzle_board, self.solution_board = self.generate_puzzle_immediate(target_difficulty)
+        
+        # 驗證並添加到緩存（如果是即時生成的）
+        if not cached_puzzle:
+            difficulty_rating, score, techniques = self.engine.rate_puzzle(self.puzzle_board)
+            if difficulty_rating == target_difficulty:
+                # 添加到緩存
+                self.puzzle_cache.add_puzzle(target_difficulty, self.puzzle_board, self.solution_board)
         
         # Store original puzzle for comparison
         self.original_puzzle = [row[:] for row in self.puzzle_board.grid]
@@ -298,8 +364,304 @@ class SudokuGUI:
         # Clear selection
         self.selected_cell = None
         
+        # Clear undo/redo history for new puzzle
+        self.clear_undo_history()
+        
         # Update display
         self.update_board()
+    
+    def generate_puzzle_immediate(self, target_difficulty):
+        """
+        即時生成題目（當緩存為空時使用）
+        針對Hard題目使用更優化的策略
+        """
+        if target_difficulty == "Hard":
+            # Hard題目使用智能策略，較少嘗試次數但更高成功率
+            max_attempts = 15
+            print("  🧠 Using smart generation for Hard puzzle...")
+            
+            for attempt in range(max_attempts):
+                try:
+                    puzzle, solution = self.puzzle_cache.generate_hard_puzzle_smart()
+                    difficulty_rating, score, techniques = self.engine.rate_puzzle(puzzle)
+                    
+                    if difficulty_rating == "Hard":
+                        print(f"  ✅ Generated Hard puzzle on attempt {attempt+1} (score: {score})")
+                        return puzzle, solution
+                    elif attempt % 3 == 0:
+                        print(f"  🔄 Attempt {attempt+1}: Got {difficulty_rating} (score: {score})")
+                        
+                except Exception as e:
+                    print(f"  ⚠️ Generation error on attempt {attempt+1}: {e}")
+            
+            # 如果智能策略失敗，使用常規方法
+            print("  🔄 Smart generation failed, using fallback method...")
+            return self.generate_puzzle_fallback(target_difficulty)
+        
+        else:
+            # Easy/Medium 使用常規方法
+            return self.generate_puzzle_fallback(target_difficulty)
+    
+    def generate_puzzle_fallback(self, target_difficulty):
+        """
+        回退生成方法（常規的重試機制）
+        """
+        empty_cells_range = {
+            "Easy": (30, 40),
+            "Medium": (40, 50),
+            "Hard": (50, 58)
+        }
+        
+        max_attempts = 20 if target_difficulty == "Hard" else 15
+        best_puzzle = None
+        best_solution = None
+        
+        for attempt in range(max_attempts):
+            min_cells, max_cells = empty_cells_range[target_difficulty]
+            empty_cells = random.randint(min_cells, max_cells)
+            
+            puzzle, solution = generate(empty_cells, max_attempts=10)
+            difficulty_rating, score, techniques = self.engine.rate_puzzle(puzzle)
+            
+            if difficulty_rating == target_difficulty:
+                print(f"  ✅ Found {target_difficulty} puzzle on attempt {attempt+1}")
+                return puzzle, solution
+            else:
+                # 保留最佳嘗試
+                if best_puzzle is None:
+                    best_puzzle = puzzle
+                    best_solution = solution
+                
+                if (attempt + 1) % 5 == 0:
+                    print(f"  🔄 Attempt {attempt+1}: Got {difficulty_rating} (score: {score})")
+        
+        # 使用最佳嘗試
+        print(f"  ⚠️ Using closest match after {max_attempts} attempts")
+        return best_puzzle or puzzle, best_solution or solution
+    
+    def replenish_cache_background(self, difficulty):
+        """
+        在背景中補充緩存
+        """
+        def background_task():
+            try:
+                # 檢查緩存狀態
+                status = self.puzzle_cache.get_cache_status()
+                current = status[difficulty]["current"]
+                target = status[difficulty]["target"]
+                
+                if current < target:
+                    needed = min(3, target - current)  # 一次最多補充3個
+                    print(f"🔄 Background: Replenishing {needed} {difficulty} puzzles...")
+                    self.puzzle_cache.generate_puzzles_for_cache(difficulty, needed)
+                    print(f"✅ Background: Cache replenished for {difficulty}")
+                    
+            except Exception as e:
+                print(f"⚠️ Background cache replenishment error: {e}")
+        
+        # 短暫延遲後開始，避免影響用戶體驗
+        time.sleep(1)
+        background_task()
+    
+    def check_and_build_cache_delayed(self):
+        """延遲檢查並建立緩存，確保GUI先啟動"""
+        def progress_callback(progress, message):
+            """進度回調函數"""
+            self.root.after(0, lambda: self.update_progress_ui(progress, message))
+        
+        def build_cache_thread():
+            """在背景線程中建立緩存"""
+            try:
+                self.cache_build_in_progress = True
+                
+                # 檢查是否需要建立緩存
+                needs_cache = False
+                for difficulty, target_count in self.puzzle_cache.target_counts.items():
+                    current_count = len(self.puzzle_cache.cache.get(difficulty, []))
+                    if current_count < target_count:
+                        needs_cache = True
+                        break
+                
+                if needs_cache:
+                    self.root.after(0, self.show_progress_bar)
+                    self.puzzle_cache.ensure_cache(progress_callback)
+                    self.root.after(0, self.hide_progress_bar)
+                
+            except Exception as e:
+                self.root.after(0, lambda: self.hide_progress_bar())
+                print(f"Error building cache: {e}")
+            finally:
+                self.cache_build_in_progress = False
+        
+        # 在背景線程中檢查和建立緩存
+        thread = threading.Thread(target=build_cache_thread, daemon=True)
+        thread.start()
+    
+    def show_progress_bar(self):
+        """顯示進度條"""
+        if not hasattr(self, 'progress_frame'):
+            return
+        self.progress_frame.pack(pady=5)
+    
+    def hide_progress_bar(self):
+        """隱藏進度條"""
+        if not hasattr(self, 'progress_frame'):
+            return
+        self.progress_frame.pack_forget()
+        self.progress_label.config(text="")
+        self.progress_bar['value'] = 0
+    
+    def update_progress_ui(self, progress, message):
+        """更新進度條UI"""
+        if not hasattr(self, 'progress_bar'):
+            return
+        self.progress_bar['value'] = progress
+        self.progress_label.config(text=message)
+        self.root.update_idletasks()
+    
+    def show_cache_status(self):
+        """顯示緩存狀態"""
+        status = self.puzzle_cache.get_cache_status()
+        
+        message = "📦 Puzzle Cache Status:\n\n"
+        for difficulty, info in status.items():
+            current = info["current"]
+            target = info["target"]
+            percentage = (current / target * 100) if target > 0 else 0
+            
+            status_emoji = "✅" if current >= target else "⚠️" if current > 0 else "❌"
+            message += f"{status_emoji} {difficulty}: {current}/{target} ({percentage:.0f}%)\n"
+        
+        message += f"\n💡 Hard puzzles are pre-generated for faster loading!"
+        message += f"\n🔄 Cache is automatically replenished in background."
+        
+        messagebox.showinfo("Puzzle Cache Status", message)
+    
+    def show_hint(self):
+        """提供解題提示"""
+        if not hasattr(self, 'puzzle_board') or self.puzzle_board is None:
+            messagebox.showwarning("提示", "請先生成一個數獨題目！")
+            return
+            
+        if not hasattr(self, 'solution_board') or self.solution_board is None:
+            messagebox.showwarning("提示", "沒有可用的解答！")
+            return
+        
+        # 找到用戶沒有填寫的空格
+        empty_cells = []
+        user_errors = []
+        
+        for i in range(9):
+            for j in range(9):
+                if self.original_puzzle[i][j] == 0:  # 原題目中的空格
+                    current_value = self.cells[i][j].cget("text")
+                    if current_value == "" or current_value == " ":
+                        # 用戶還沒填寫
+                        empty_cells.append((i, j))
+                    elif current_value.isdigit() and int(current_value) != self.solution_board.grid[i][j]:
+                        # 用戶填寫錯誤
+                        user_errors.append((i, j))
+        
+        # 優先提示錯誤
+        if user_errors:
+            row, col = user_errors[0]
+            correct_value = self.solution_board.grid[row][col]
+            current_value = self.cells[row][col].cget("text")
+            
+            # 高亮錯誤格子
+            self.cells[row][col].config(bg="#FFCDD2")  # 淺紅色
+            self.root.after(2000, lambda: self.cells[row][col].config(bg=self.CELL_BG))  # 2秒後恢復
+            
+            messagebox.showinfo("提示", 
+                              f"位置 ({row+1},{col+1}) 的數字不正確！\n" +
+                              f"您填寫的是 {current_value}，正確答案是 {correct_value}")
+            return
+        
+        # 沒有錯誤，提供下一步提示
+        if empty_cells:
+            # 選擇一個空格給出答案
+            row, col = empty_cells[0]
+            correct_value = self.solution_board.grid[row][col]
+            
+            # 高亮提示格子
+            self.cells[row][col].config(bg="#E8F5E8")  # 淺綠色
+            self.root.after(3000, lambda: self.cells[row][col].config(bg=self.CELL_BG))  # 3秒後恢復
+            
+            # 詢問用戶是否要直接填入答案
+            result = messagebox.askyesno("提示", 
+                                       f"位置 ({row+1},{col+1}) 的正確答案是 {correct_value}\n\n" +
+                                       "是否要自動填入這個答案？")
+            
+            if result:
+                self.cells[row][col].config(text=str(correct_value), fg=self.SOLUTION_COLOR)
+                self.cells[row][col].hint_filled = True  # 標記為提示填寫
+        else:
+            messagebox.showinfo("提示", "恭喜！您已經完成了這個數獨！🎉")
+    
+    def record_move(self, row, col, old_value, new_value):
+        """記錄一個移動以供撤銷/重做"""
+        move = {
+            'row': row,
+            'col': col, 
+            'old_value': old_value,
+            'new_value': new_value
+        }
+        self.undo_stack.append(move)
+        # 清空重做堆疊，因為新的移動使重做無效
+        self.redo_stack.clear()
+        self.update_undo_redo_buttons()
+    
+    def undo_move(self):
+        """撤銷上一個移動"""
+        if not self.undo_stack:
+            return
+            
+        move = self.undo_stack.pop()
+        
+        # 恢復舊值
+        self.puzzle_board.grid[move['row']][move['col']] = move['old_value']
+        
+        # 將移動添加到重做堆疊
+        self.redo_stack.append(move)
+        
+        self.update_board()
+        self.update_undo_redo_buttons()
+    
+    def redo_move(self):
+        """重做上一個撤銷的移動"""
+        if not self.redo_stack:
+            return
+            
+        move = self.redo_stack.pop()
+        
+        # 恢復新值
+        self.puzzle_board.grid[move['row']][move['col']] = move['new_value']
+        
+        # 將移動添加到撤銷堆疊
+        self.undo_stack.append(move)
+        
+        self.update_board()
+        self.update_undo_redo_buttons()
+    
+    def update_undo_redo_buttons(self):
+        """更新撤銷/重做按鈕的狀態"""
+        # 更新撤銷按鈕
+        if self.undo_stack:
+            self.undo_button.config(state="normal")
+        else:
+            self.undo_button.config(state="disabled")
+        
+        # 更新重做按鈕
+        if self.redo_stack:
+            self.redo_button.config(state="normal")
+        else:
+            self.redo_button.config(state="disabled")
+    
+    def clear_undo_history(self):
+        """清空撤銷歷史（在生成新題目時調用）"""
+        self.undo_stack.clear()
+        self.redo_stack.clear()
+        self.update_undo_redo_buttons()
     
     def update_board(self):
         """Update the visual display of the board"""
@@ -360,29 +722,53 @@ class SudokuGUI:
         self.update_board()
     
     def key_pressed(self, event):
-        """Handle keyboard input"""
+        """Handle keyboard input with proper error handling"""
         if self.selected_cell is None:
             return
         
+        # Skip non-character events (like Alt, Ctrl, etc.)
+        if not hasattr(event, 'char') or not hasattr(event, 'keysym'):
+            return
+            
         row, col = self.selected_cell
         
         # Check if this is a fixed cell from original puzzle
         if self.original_puzzle[row][col] != 0:
             return  # Can't modify fixed cells
         
-        # Handle number keys
-        if event.char in "123456789":
-            num = int(event.char)
-            self.puzzle_board.grid[row][col] = num
-            self.update_board()
+        try:
+            # Handle number keys
+            if event.char in "123456789":
+                num = int(event.char)
+                old_value = self.puzzle_board.grid[row][col]
+                if old_value != num:  # Only record if value actually changes
+                    self.record_move(row, col, old_value, num)
+                    self.puzzle_board.grid[row][col] = num
+                    self.update_board()
+            
+            # Handle delete/backspace/0
+            elif event.keysym in ["Delete", "BackSpace"] or event.char == "0":
+                old_value = self.puzzle_board.grid[row][col]
+                if old_value != 0:  # Only record if value actually changes
+                    self.record_move(row, col, old_value, 0)
+                    self.puzzle_board.grid[row][col] = 0
+                    self.update_board()
+                
+        except (ValueError, AttributeError) as e:
+            # Silently ignore invalid input
+            pass
         
-        # Handle delete/backspace
-        elif event.keysym in ["Delete", "BackSpace", "0"]:
-            self.puzzle_board.grid[row][col] = 0
-            self.update_board()
+        # Handle keyboard shortcuts
+        if event.state & 0x4:  # Ctrl is pressed
+            if event.keysym == 'z':  # Ctrl+Z
+                self.undo_move()
+                return
+            elif event.keysym == 'y':  # Ctrl+Y
+                self.redo_move() 
+                return
         
-        # Handle arrow keys
-        elif event.keysym == "Up" and row > 0:
+        # Handle arrow keys (outside try block for navigation)
+        if event.keysym == "Up" and row > 0:
             self.selected_cell = (row - 1, col)
             self.update_board()
         elif event.keysym == "Down" and row < 8:
