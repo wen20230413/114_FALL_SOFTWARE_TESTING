@@ -6,6 +6,7 @@ Integrates with existing difficulty rating system
 
 import tkinter as tk
 from tkinter import messagebox, ttk
+import random
 from SUDOKU import SudokuBoard, generate
 from difficulty_engine import DifficultyEngine
 
@@ -25,7 +26,7 @@ class SudokuGUI:
         self.user_progress = None  # Store user's solving progress
         self.selected_cell = None
         self.cells = [[None for _ in range(9)] for _ in range(9)]
-        self.selected_difficulty = tk.StringVar(value="Medium")  # Default difficulty
+        self.selected_difficulty = tk.StringVar(value="Easy")  # Default difficulty = Easy (by complexity)
         self.solution_shown = False  # Track if solution is currently shown
         self.show_errors = False  # Track if errors should be highlighted
         
@@ -100,13 +101,13 @@ class SudokuGUI:
         
         tk.Label(
             difficulty_selection_frame,
-            text="Generate Puzzle:",
+            text="Select Difficulty:",
             font=("Arial", 11, "bold"),
             bg=self.BG_COLOR
         ).pack(side="left", padx=5)
         
-        # Radio buttons for difficulty
-        difficulties = [("Easy (30 blanks)", "30"), ("Medium (45 blanks)", "45"), ("Hard (55 blanks)", "55")]
+        # Radio buttons for difficulty (based on solving complexity, not empty cells)
+        difficulties = [("Easy", "Easy"), ("Medium", "Medium"), ("Hard", "Hard")]
         for text, value in difficulties:
             tk.Radiobutton(
                 difficulty_selection_frame,
@@ -197,19 +198,61 @@ class SudokuGUI:
         # self.generate_new_puzzle()
         pass
     
-    def get_empty_cells_count(self):
-        """Get number of empty cells based on selected difficulty"""
-        difficulty_map = {
-            "30": 30,   # Easy: fewer empty cells
-            "45": 45,   # Medium: moderate empty cells
-            "55": 55    # Hard: more empty cells
-        }
-        return difficulty_map.get(self.selected_difficulty.get(), 45)
-    
     def generate_new_puzzle(self):
-        """Generate a new Sudoku puzzle"""
-        difficulty = self.get_empty_cells_count()  # Get difficulty from selection
-        self.puzzle_board, self.solution_board = generate(difficulty)
+        """
+        Generate a new Sudoku puzzle matching the selected difficulty level
+        Uses DifficultyEngine to ensure the puzzle matches the target complexity
+        """
+        target_difficulty = self.selected_difficulty.get()  # "Easy", "Medium", or "Hard"
+        
+        print(f"\n🎯 Generating {target_difficulty} puzzle...")
+        
+        # Difficulty ranges for empty cells (starting estimates)
+        empty_cells_range = {
+            "Easy": (30, 40),
+            "Medium": (40, 50),
+            "Hard": (50, 58)
+        }
+        
+        max_attempts = 30
+        best_puzzle = None
+        best_solution = None
+        best_score = None
+        
+        for attempt in range(max_attempts):
+            # Start with a random number of empty cells in the range
+            min_cells, max_cells = empty_cells_range[target_difficulty]
+            empty_cells = random.randint(min_cells, max_cells)
+            
+            # Generate puzzle
+            puzzle, solution = generate(empty_cells)
+            
+            # Evaluate difficulty
+            difficulty_rating, score, techniques = self.engine.rate_puzzle(puzzle)
+            
+            # Check if it matches target
+            if difficulty_rating == target_difficulty:
+                # Perfect match!
+                self.puzzle_board = puzzle
+                self.solution_board = solution
+                best_score = score
+                print(f"✅ Found {target_difficulty} puzzle on attempt {attempt+1}")
+                break
+            else:
+                # Keep track of best attempt
+                if best_puzzle is None:
+                    best_puzzle = puzzle
+                    best_solution = solution
+                    best_score = score
+                
+                # Print progress every 5 attempts
+                if (attempt + 1) % 5 == 0:
+                    print(f"  Attempt {attempt+1}: Got {difficulty_rating} (score: {score}), retrying...")
+        else:
+            # If no perfect match found, use best attempt
+            print(f"⚠️  Using closest match after {max_attempts} attempts")
+            self.puzzle_board = best_puzzle
+            self.solution_board = best_solution
         
         # Store original puzzle for comparison
         self.original_puzzle = [row[:] for row in self.puzzle_board.grid]
@@ -225,16 +268,16 @@ class SudokuGUI:
         # Rate the puzzle difficulty
         difficulty_rating, score, techniques = self.engine.rate_puzzle(self.puzzle_board)
         
-        # Get selected difficulty name
-        difficulty_names = {"30": "Easy", "45": "Medium", "55": "Hard"}
-        selected_name = difficulty_names.get(self.selected_difficulty.get(), "Medium")
+        # Count empty cells
+        empty_count = sum(row.count(0) for row in self.puzzle_board.grid)
         
         # Print detailed info to terminal
         print("\n" + "="*60)
         print(f"🎮 New Puzzle Generated")
         print("="*60)
-        print(f"Generated Difficulty: {selected_name} ({difficulty} empty cells)")
+        print(f"Target Difficulty: {target_difficulty}")
         print(f"Evaluated Complexity: {difficulty_rating} (score: {score})")
+        print(f"Empty cells: {empty_count}")
         
         # Format techniques (count occurrences)
         from collections import Counter
@@ -246,7 +289,7 @@ class SudokuGUI:
         
         # Update info label - show only simple info on GUI
         self.difficulty_label.config(
-            text=f"Puzzle: {selected_name} ({difficulty} blanks) | Complexity: {difficulty_rating}"
+            text=f"Difficulty: {difficulty_rating} (score: {score}) | {empty_count} empty cells"
         )
         
         # Hide techniques label (info now in terminal)

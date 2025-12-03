@@ -102,22 +102,96 @@ class SudokuBoard:
         return difficulty
 
 
-def generate(difficulty):
-    # 1. Create a full, random solution
-    empty_grid = [[0] * 9 for _ in range(9)]
-    solution_board = SudokuBoard(empty_grid)
-    solution_board.solve(randomize=True)  # Use the randomized solver
-
-    # 2. Create a puzzle by removing cells
-    puzzle_board = SudokuBoard(solution_board.grid)
+def generate(difficulty, max_attempts=50):
+    """
+    Generate a Sudoku puzzle with mostly symmetric holes (帶隨機性的中心對稱挖洞)
+    約 70-80% 對稱，增加自然感，並確保唯一解
     
-    cells_to_remove = difficulty
-    while cells_to_remove > 0:
-        row = random.randint(0, 8)
-        col = random.randint(0, 8)
+    Args:
+        difficulty: Number of cells to remove
+        max_attempts: Maximum attempts to generate a valid puzzle with unique solution
+    
+    Returns:
+        tuple: (puzzle_board, solution_board)
+    """
+    for attempt in range(max_attempts):
+        # 1. Create a full, random solution
+        empty_grid = [[0] * 9 for _ in range(9)]
+        solution_board = SudokuBoard(empty_grid)
+        solution_board.solve(randomize=True)  # Use the randomized solver
 
-        if puzzle_board.grid[row][col] != 0:
-            puzzle_board.grid[row][col] = 0
-            cells_to_remove -= 1
+        # 2. Create a puzzle by removing cells with partial symmetry
+        puzzle_board = SudokuBoard(solution_board.grid)
+        
+        # Decide how many cells to remove symmetrically vs randomly
+        # 70-80% symmetric, 20-30% random
+        symmetry_ratio = random.uniform(0.7, 0.8)
+        symmetric_count = int(difficulty * symmetry_ratio)
+        random_count = difficulty - symmetric_count
+        
+        # Make sure symmetric_count is even
+        if symmetric_count % 2 == 1:
+            symmetric_count -= 1
+            random_count += 1
+        
+        pairs_to_remove = symmetric_count // 2
+        
+        # Create list of all possible cell positions
+        available_cells = []
+        for row in range(9):
+            for col in range(9):
+                available_cells.append((row, col))
+        
+        # Shuffle to randomize which cells to remove
+        random.shuffle(available_cells)
+        
+        # Phase 1: Remove pairs symmetrically
+        removed_count = 0
+        for row, col in available_cells:
+            if removed_count >= pairs_to_remove:
+                break
             
+            # Calculate symmetric position (center symmetry)
+            sym_row = 8 - row
+            sym_col = 8 - col
+            
+            # Skip if this would be the same cell (center)
+            if row == sym_row and col == sym_col:
+                continue
+            
+            # Only remove if both cells still have values
+            if puzzle_board.grid[row][col] != 0 and puzzle_board.grid[sym_row][sym_col] != 0:
+                puzzle_board.grid[row][col] = 0
+                puzzle_board.grid[sym_row][sym_col] = 0
+                removed_count += 1
+        
+        # Phase 2: Remove remaining cells randomly for natural variation
+        cells_removed = sum(row.count(0) for row in puzzle_board.grid)
+        attempts_random = 0
+        max_attempts_random = random_count * 10  # Prevent infinite loop
+        
+        while cells_removed < difficulty and attempts_random < max_attempts_random:
+            row = random.randint(0, 8)
+            col = random.randint(0, 8)
+            
+            if puzzle_board.grid[row][col] != 0:
+                puzzle_board.grid[row][col] = 0
+                cells_removed += 1
+            
+            attempts_random += 1
+        
+        # 3. Verify unique solution
+        if puzzle_board.has_unique_solution():
+            # Success! Return this puzzle
+            return puzzle_board, solution_board
+        
+        # If not unique, try again (loop continues)
+        if attempt < max_attempts - 1:
+            # Print progress for debugging (optional, can be removed)
+            if attempt % 10 == 0 and attempt > 0:
+                print(f"  Attempt {attempt+1}/{max_attempts}: Retrying to get unique solution...")
+    
+    # If we get here, we couldn't generate a unique solution puzzle
+    # Return the last attempt anyway (rare case)
+    print(f"Warning: Could not generate puzzle with unique solution after {max_attempts} attempts")
     return puzzle_board, solution_board

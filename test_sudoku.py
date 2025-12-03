@@ -90,6 +90,32 @@ def test_generate():
     
     assert is_complete_valid_solution(solution_board), "Provided solution must be valid and complete"
 
+def test_partial_symmetric_generation():
+    """Test that generated puzzles have partial symmetry (約 70-80% 對稱)"""
+    for difficulty in [30, 45, 55]:
+        puzzle_board, solution_board = generate(difficulty)
+        
+        # Count symmetric pairs
+        symmetric_count = 0
+        total_empty = 0
+        checked = set()
+        
+        for i in range(9):
+            for j in range(9):
+                if puzzle_board.grid[i][j] == 0:
+                    total_empty += 1
+                    if (i, j) not in checked:
+                        sym_i, sym_j = 8 - i, 8 - j
+                        if puzzle_board.grid[sym_i][sym_j] == 0:
+                            symmetric_count += 1
+                            checked.add((i, j))
+                            checked.add((sym_i, sym_j))
+        
+        # Check that symmetry is between 60-90% (allowing some variance)
+        symmetry_ratio = (symmetric_count * 2 / total_empty) if total_empty > 0 else 0
+        assert 0.6 <= symmetry_ratio <= 0.9, \
+            f"Symmetry ratio {symmetry_ratio:.2f} should be between 60-90% for difficulty {difficulty}"
+
 def test_has_unique_solution():
     """Test that has_unique_solution correctly identifies puzzles with unique or multiple solutions"""
     
